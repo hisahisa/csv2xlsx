@@ -4,7 +4,7 @@ import random
 from datetime import datetime, timedelta
 
 # 設定
-num_rows = 500000
+num_rows = 1000000
 chains = {
     "C01": "あおぞらあいうえおあいうえおあいうえおあいうえおあいうえおマーケット",
     "C02": "スマイルかきくけこかきくけこかきくけこかきくけこかきくけこかきくけこかきくけこマート",

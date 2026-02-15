@@ -11,3 +11,6 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
+python-source = "."
+# 実際に配布するモジュール名
+module-name = "csv_converter.csv_converter"

@@ -29,15 +29,14 @@ fn write_csv_to_excel_inner(
         .from_path(csv_path)?;
 
     let date_format = Format::new().set_num_format("yyyy-mm-dd");
-    let mut max_row_idx = 0;
+
+    // ループの前に「最後に処理した行」を Option で持つ
+    let mut last_row = None;
 
     let mut records = rdr.records().enumerate();
 
     // ヘッダー処理
     logic::write_header_rows(worksheet, &mut records, HEADER_ROW)?;
-
-    // ループの前に「最後に処理した行」を Option で持つ
-    let mut last_row = None;
 
     // データ行の処理
     for (row_idx, result) in records {

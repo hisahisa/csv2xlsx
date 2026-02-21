@@ -36,11 +36,14 @@ fn write_csv_to_excel_inner(
     // ヘッダー処理
     logic::write_header_rows(worksheet, &mut records, HEADER_ROW)?;
 
+    // ループの前に「最後に処理した行」を Option で持つ
+    let mut last_row = None;
+
     // データ行の処理
     for (row_idx, result) in records {
         let record = result?;
         let current_row = row_idx as u32;
-        max_row_idx = current_row;
+        last_row = Some(current_row); // 処理した行を記憶
 
         for (col_idx, field) in record.iter().enumerate() {
             let c_idx = col_idx as u16;
@@ -58,7 +61,9 @@ fn write_csv_to_excel_inner(
     }
 
     // ドロップダウン適用
-    logic::apply_column_validations(worksheet, &col_defs, HEADER_ROW, max_row_idx)?;
+    if let Some(max_idx) = last_row {
+        logic::apply_column_validations(worksheet, &col_defs, HEADER_ROW, max_idx)?;
+    }
 
     workbook.save(excel_path)?;
     Ok(())

@@ -3,10 +3,11 @@ use rust_xlsxwriter::{DataValidation, Format, Worksheet, ExcelDateTime};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
+
 // 定義一覧を Vec<ColType> へ変換
 pub fn parse_column_types(define_output: &str) -> Vec<ColType> {
     define_output.split(',')
-        .map(|s| match s.trim() {
+        .map(|s| match s.trim().to_lowercase().as_str() {
             "int" => ColType::Int,
             "date" => ColType::Date,
             "kbn_list" => ColType::KbnList,
@@ -69,7 +70,7 @@ pub fn write_field(
         }
         ColType::KbnList => {
             let set = column_unique_items.entry(c_idx).or_insert_with(HashSet::new);
-            let val_u8 = field.parse::<u8>().unwrap_or(0);
+            let val_u8 = field.trim().parse::<u8>().unwrap_or(0);
             if !field.is_empty() && !set.contains(&val_u8) {
                 set.insert(val_u8);
             }

@@ -1,17 +1,15 @@
+mod types; // types.rs を読み込む
+mod logic; // logic.rs を読み込む
+
+use types::ColType;
+use logic::write_field;
 use pyo3::prelude::*;
-use rust_xlsxwriter::{DataValidation, Workbook, Format, ExcelDateTime};
+use rust_xlsxwriter::{Workbook, Format};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
 const HEADER_ROW: u32 = 1;
 
-// 文字列判定を避けるためのEnum
-enum ColType {
-    Str,
-    Int,
-    Date,
-    KbnList,
-}
 
 // 内部ロジック
 fn write_csv_to_excel_inner(
@@ -20,16 +18,10 @@ fn write_csv_to_excel_inner(
     define_output: &str,
 ) -> Result<(), Box<dyn Error>> {
 
-    // 1. 文字列比較をループの外に出す（プリプロセス）
-    let col_types: Vec<ColType> = define_output.split(',')
-        .map(|s| match s.trim() {
-            "int" => ColType::Int,
-            "date" => ColType::Date,
-            "kbn_list" => ColType::KbnList,
-            _ => ColType::Str,
-        })
-        .collect();
+    // 定義文字列から列の型情報を生成
+    let col_types = logic::parse_column_types(define_output);
 
+    // CSVファイルを読み込むためのリーダーを準備
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(false)
         .from_path(csv_path)?;
@@ -40,24 +32,17 @@ fn write_csv_to_excel_inner(
     // 日付フォーマットの事前生成
     let date_format = Format::new().set_num_format("yyyy-mm-dd");
 
-    // ユニーク値保持用（キー検索を高速化するためにEntry APIなどを活用もできるが、今回はcontainsチェックで最適化）
+    // ユニーク値保持用
     let mut column_unique_items: HashMap<u16, HashSet<u8>> = HashMap::new();
     let mut max_row_idx = 0;
 
     // イテレータを取得
     let mut records = rdr.records().enumerate();
 
-    // --- ヘッダー処理（ループ外に出す） ---
-    for i in 0..HEADER_ROW {
-        if let Some((_, result)) = records.next() {
-            let record = result?;
-            for (col_idx, field) in record.iter().enumerate() {
-                worksheet.write_string(i as u32, col_idx as u16, field)?;
-            }
-        }
-    }
+    // ヘッダー処理
+    logic::write_header_rows(worksheet, &mut records, HEADER_ROW)?;
 
-    // --- データ行の処理 ---
+    // データ行の処理
     for (row_idx, result) in records {
         let record = result?;
         let current_row = row_idx as u32;
@@ -66,75 +51,24 @@ fn write_csv_to_excel_inner(
         for (col_idx, field) in record.iter().enumerate() {
             let c_idx = col_idx as u16;
 
-            // 安全にアクセス
+            // enum ColType取得
             let col_type = col_types.get(col_idx).unwrap_or(&ColType::Str);
 
-            match col_type {
-                ColType::Int => {
-                    // 高速なパース (lexicalなどのクレートを使うともっと速いがstdでも十分)
-                    if let Ok(num) = field.parse::<f64>() {
-                        worksheet.write_number(current_row, c_idx, num)?;
-                    } else {
-                        worksheet.write_string(current_row, c_idx, field)?;
-                    }
-                },
-                ColType::Date => {
-                    // 軽量な判定：Sring割り当てを避ける
-                    let result = ExcelDateTime::parse_from_str(field);
-                    match result {
-                        Ok(dt) => {
-                            worksheet.write_datetime_with_format(current_row, c_idx, &dt, &date_format)?;
-                        }
-                        Err(_) => {
-                            // パース失敗時のみコストを払って置換を試す
-                            let replaced = field.replace("/", "-");
-                            if let Ok(dt) = ExcelDateTime::parse_from_str(&replaced) {
-                                worksheet.write_datetime_with_format(current_row, c_idx, &dt, &date_format)?;
-                            } else {
-                                // どうしてもダメなら文字列
-                                worksheet.write_string(current_row, c_idx, field)?;
-                            }
-                        }
-                    }
-                },
-                ColType::KbnList => {
-                    // --- 変更箇所2: HashSet<u8> として取得 ---
-                    let set = column_unique_items.entry(c_idx).or_insert_with(HashSet::new);
-
-                    // 文字列を u8 に変換 (99以内なら u8 で十分)
-                    let val_u8 = field.parse::<u8>().unwrap_or(0);
-
-                    // 数値として存在チェック & 挿入 (メモリ確保なしで爆速)
-                    if !field.is_empty() && !set.contains(&val_u8) {
-                        set.insert(val_u8);
-                    }
-
-                    // Excelへは数値として書き込む
-                    worksheet.write_number(current_row, c_idx, val_u8 as f64)?;
-                },
-                ColType::Str => {
-                    worksheet.write_string(current_row, c_idx, field)?;
-                }
-            }
+            // Excelへの書き出し
+            write_field(
+                worksheet,
+                current_row,
+                c_idx,
+                field,
+                col_type,
+                &date_format,
+                &mut column_unique_items, // 可変参照で渡す
+            )?;
         }
     }
 
-    // ドロップダウン適用
-    for (c_idx, items) in column_unique_items {
-        // items は HashSet<u8> なので、ソートするために Vec<u8> にする
-        let mut items_vec: Vec<u8> = items.into_iter().collect();
-        items_vec.sort();
-
-        // Excelの入力規則（DataValidation）は文字列のリストを期待するため
-        // ここで String に変換する。ここは「列数分」しか走らないので低コスト
-        let items_str_vec: Vec<String> = items_vec.iter().map(|n| n.to_string()).collect();
-
-        if !items_str_vec.is_empty() {
-            if let Ok(validation) = DataValidation::new().allow_list_strings(&items_str_vec) {
-                worksheet.add_data_validation(HEADER_ROW, c_idx, max_row_idx, c_idx, &validation)?;
-            }
-        }
-    }
+    // 収集したユニーク値からドロップダウンリストを適用
+    logic::apply_column_validations(worksheet, column_unique_items, HEADER_ROW, max_row_idx)?;
 
     workbook.save(excel_path)?;
     Ok(())

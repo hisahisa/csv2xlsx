@@ -1,42 +1,36 @@
-mod types; // types.rs を読み込む
-mod logic; // logic.rs を読み込む
+mod types;
+mod logic;
 
-use types::ColType;
-use logic::write_field;
+use types::{ColType, ColDefinition};
 use pyo3::prelude::*;
 use rust_xlsxwriter::{Workbook, Format};
-use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
 const HEADER_ROW: u32 = 1;
 
-
-// 内部ロジック
 fn write_csv_to_excel_inner(
     csv_path: &str,
     excel_path: &str,
-    define_output: &str,
+    col_defs: Vec<ColDefinition>,
 ) -> Result<(), Box<dyn Error>> {
+    let mut workbook = Workbook::new();
+    let worksheet = workbook.add_worksheet();
 
-    // 定義文字列から列の型情報を生成
-    let col_types = logic::parse_column_types(define_output);
+    // 列幅の設定（書き込み前に実行）
+    logic::apply_column_settings(worksheet, &col_defs)?;
 
-    // CSVファイルを読み込むためのリーダーを準備
+    // ColDefinition から ColType の Vec を生成
+    let col_types: Vec<ColType> = col_defs.iter()
+        .map(|d| ColType::from_str(&d.col_type))
+        .collect();
+
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(false)
         .from_path(csv_path)?;
 
-    let mut workbook = Workbook::new();
-    let worksheet = workbook.add_worksheet();
-
-    // 日付フォーマットの事前生成
     let date_format = Format::new().set_num_format("yyyy-mm-dd");
-
-    // ユニーク値保持用
-    let mut column_unique_items: HashMap<u16, HashSet<u8>> = HashMap::new();
     let mut max_row_idx = 0;
 
-    // イテレータを取得
     let mut records = rdr.records().enumerate();
 
     // ヘッダー処理
@@ -50,25 +44,21 @@ fn write_csv_to_excel_inner(
 
         for (col_idx, field) in record.iter().enumerate() {
             let c_idx = col_idx as u16;
-
-            // enum ColType取得
             let col_type = col_types.get(col_idx).unwrap_or(&ColType::Str);
 
-            // Excelへの書き出し
-            write_field(
+            logic::write_field(
                 worksheet,
                 current_row,
                 c_idx,
                 field,
                 col_type,
-                &date_format,
-                &mut column_unique_items, // 可変参照で渡す
+                &date_format
             )?;
         }
     }
 
-    // 収集したユニーク値からドロップダウンリストを適用
-    logic::apply_column_validations(worksheet, column_unique_items, HEADER_ROW, max_row_idx)?;
+    // ドロップダウン適用
+    logic::apply_column_validations(worksheet, &col_defs, HEADER_ROW, max_row_idx)?;
 
     workbook.save(excel_path)?;
     Ok(())
@@ -76,7 +66,13 @@ fn write_csv_to_excel_inner(
 
 #[pyfunction]
 fn convert(csv_path: &str, excel_path: &str, define_output: &str) -> PyResult<()> {
-    write_csv_to_excel_inner(csv_path, excel_path, define_output).map_err(|e| {
+    let col_defs: Vec<ColDefinition> = serde_json::from_str(define_output)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+
+    // Vec のデバッグ表示は {:?}
+    // eprintln!("DEBUG: col_defs = {:?}", col_defs);
+
+    write_csv_to_excel_inner(csv_path, excel_path, col_defs).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
     })
 }

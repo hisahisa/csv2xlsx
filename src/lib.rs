@@ -41,7 +41,7 @@ fn write_csv_to_excel_inner(
     let date_format = Format::new().set_num_format("yyyy-mm-dd");
 
     // ユニーク値保持用（キー検索を高速化するためにEntry APIなどを活用もできるが、今回はcontainsチェックで最適化）
-    let mut column_unique_items: HashMap<u16, HashSet<String>> = HashMap::new();
+    let mut column_unique_items: HashMap<u16, HashSet<u8>> = HashMap::new();
     let mut max_row_idx = 0;
 
     // イテレータを取得
@@ -98,14 +98,19 @@ fn write_csv_to_excel_inner(
                     }
                 },
                 ColType::KbnList => {
-                    // ★【重要】Allocationの削減
-                    // HashSetにデータを入れる際、まず &str で存在確認をする。
-                    // 存在しない場合のみ to_string() してメモリ確保を行う。
+                    // --- 変更箇所2: HashSet<u8> として取得 ---
                     let set = column_unique_items.entry(c_idx).or_insert_with(HashSet::new);
-                    if !field.is_empty() && !set.contains(field) {
-                        set.insert(field.to_string());
+
+                    // 文字列を u8 に変換 (99以内なら u8 で十分)
+                    let val_u8 = field.parse::<u8>().unwrap_or(0);
+
+                    // 数値として存在チェック & 挿入 (メモリ確保なしで爆速)
+                    if !field.is_empty() && !set.contains(&val_u8) {
+                        set.insert(val_u8);
                     }
-                    worksheet.write_string(current_row, c_idx, field)?;
+
+                    // Excelへは数値として書き込む
+                    worksheet.write_number(current_row, c_idx, val_u8 as f64)?;
                 },
                 ColType::Str => {
                     worksheet.write_string(current_row, c_idx, field)?;
@@ -116,14 +121,16 @@ fn write_csv_to_excel_inner(
 
     // ドロップダウン適用
     for (c_idx, items) in column_unique_items {
-        let mut items_vec: Vec<String> = items.into_iter().collect();
+        // items は HashSet<u8> なので、ソートするために Vec<u8> にする
+        let mut items_vec: Vec<u8> = items.into_iter().collect();
         items_vec.sort();
 
-        // 件数が多いとExcelが壊れるためガード
-        if !items_vec.is_empty() && items_vec.iter().map(|s| s.len()).sum::<usize>() < 255 * 255 {
-            // データ入力規則の設定（エラーハンドリングは要件に合わせて）
-            if let Ok(validation) = DataValidation::new().allow_list_strings(&items_vec) {
-                // 行全体に適用（ヘッダー除く）
+        // Excelの入力規則（DataValidation）は文字列のリストを期待するため
+        // ここで String に変換する。ここは「列数分」しか走らないので低コスト
+        let items_str_vec: Vec<String> = items_vec.iter().map(|n| n.to_string()).collect();
+
+        if !items_str_vec.is_empty() {
+            if let Ok(validation) = DataValidation::new().allow_list_strings(&items_str_vec) {
                 worksheet.add_data_validation(HEADER_ROW, c_idx, max_row_idx, c_idx, &validation)?;
             }
         }

@@ -4,7 +4,6 @@ import json
 
 csv_file = "sales_data_500k_with_kbn.csv"
 excel_file = "test.xlsx"
-# ドロップダウンのリストとして使うCSVファイル（同じファイルを使う場合は csv_file を指定）
 
 print(f"Converting {csv_file} to {excel_file} ...")
 define_output_dict = [

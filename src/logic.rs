@@ -33,6 +33,7 @@ pub fn write_field(
     current_row: u32,
     c_idx: u16,
     field: &str,
+    def: &ColDefinition, // ColType ではなく ColDefinition 丸ごと受け取る
     col_type: &ColType,
     date_format: &Format
 ) -> Result<(), Box<dyn Error>> {
@@ -59,8 +60,18 @@ pub fn write_field(
         }
         ColType::KbnList => {
             let val_u8 = field.trim().parse::<u8>().unwrap_or(0);
-            // kbn_list の場合は自動収集はせず、表示のみ（バリデーションは別途 apply_column_validations で実施）
-            worksheet.write_number(current_row, c_idx, val_u8 as f64)?;
+            // 許容リストに含まれているかチェック
+            if let Some(allowed_values) = &def.kbn_values {
+                if !allowed_values.contains(&val_u8) {
+                    // 許容外の値ならエラーメッセージを出して停止
+                    return Err(format!(
+                        "Invalid value '{}' at Row {}, Col {}. Allowed: {:?}",
+                        val_u8, current_row + 1, c_idx + 1, allowed_values
+                    ).into()); // .into() で Box<dyn Error> に変換
+                }
+                // kbn_list の場合は自動収集はせず、表示のみ（バリデーションは別途 apply_column_validations で実施）
+                worksheet.write_number(current_row, c_idx, val_u8 as f64)?;
+            }
         }
         ColType::Str => {
             worksheet.write_string(current_row, c_idx, field)?;

@@ -47,12 +47,14 @@ fn write_csv_to_excel_inner(
         for (col_idx, field) in record.iter().enumerate() {
             let c_idx = col_idx as u16;
             let col_type = col_types.get(col_idx).unwrap_or(&ColType::Str);
+            let def: &ColDefinition = &col_defs[col_idx]; // 構造体をそのまま渡す
 
             logic::write_field(
                 worksheet,
                 current_row,
                 c_idx,
                 field,
+                def,
                 col_type,
                 &date_format
             )?;

@@ -1,4 +1,4 @@
-use crate::types::{ColType, ColDefinition};
+use crate::types::{ColDefinition};
 use rust_xlsxwriter::{DataValidation, Format, Worksheet, ExcelDateTime};
 use std::error::Error;
 
@@ -33,19 +33,19 @@ pub fn write_field(
     current_row: u32,
     c_idx: u16,
     field: &str,
-    def: &ColDefinition, // ColType ではなく ColDefinition 丸ごと受け取る
-    col_type: &ColType,
+    def: &ColDefinition,
     date_format: &Format
 ) -> Result<(), Box<dyn Error>> {
-    match col_type {
-        ColType::Int => {
+    let col_type_str = def.col_type.as_str();
+    match col_type_str {
+        "int" => {
             if let Ok(num) = field.trim().parse::<f64>() {
                 worksheet.write_number(current_row, c_idx, num)?;
             } else {
                 worksheet.write_string(current_row, c_idx, field)?;
             }
         }
-        ColType::Date => {
+        "date" => {
             let trimmed = field.trim();
             if let Ok(dt) = ExcelDateTime::parse_from_str(trimmed) {
                 worksheet.write_datetime_with_format(current_row, c_idx, &dt, date_format)?;
@@ -58,22 +58,18 @@ pub fn write_field(
                 }
             }
         }
-        ColType::KbnList => {
-            let val_u8 = field.trim().parse::<u8>().unwrap_or(0);
-            // 許容リストに含まれているかチェック
-            if let Some(allowed_values) = &def.kbn_values {
-                if !allowed_values.contains(&val_u8) {
-                    // 許容外の値ならエラーメッセージを出して停止
-                    return Err(format!(
-                        "Invalid value '{}' at Row {}, Col {}. Allowed: {:?}",
-                        val_u8, current_row + 1, c_idx + 1, allowed_values
-                    ).into()); // .into() で Box<dyn Error> に変換
+        s if s.starts_with("kbn_list") => {
+            // 数値としてパース
+            let trimmed = field.trim();
+            if let Ok(v) = trimmed.parse::<u8>() {
+                if let Some(allowed_values) = &def.kbn_values {
+                    if allowed_values.contains(&v) {
+                        worksheet.write_number(current_row, c_idx as u16, v as f64)?;
+                    }
                 }
-                // kbn_list の場合は自動収集はせず、表示のみ（バリデーションは別途 apply_column_validations で実施）
-                worksheet.write_number(current_row, c_idx, val_u8 as f64)?;
             }
         }
-        ColType::Str => {
+        _ => {
             worksheet.write_string(current_row, c_idx, field)?;
         }
     }
@@ -87,15 +83,23 @@ pub fn apply_column_validations(
     max_row_idx: u32,
 ) -> Result<(), Box<dyn Error>> {
     for (c_idx, def) in col_defs.iter().enumerate() {
-        if let Some(values) = &def.kbn_values {
-            let items: Vec<String> = values.iter().map(|n| n.to_string()).collect();
-            if !items.is_empty() {
-                let validation = DataValidation::new().allow_list_strings(&items)?;
-                worksheet.add_data_validation(header_row,
-                                              c_idx as u16,
-                                              max_row_idx,
-                                              c_idx as u16,
-                                              &validation)?;
+        // "kbn_lis*" で始まる列だけコンボボックスを設定(値はkbn_values)
+        if def.col_type.starts_with("kbn_list") {
+            if let Some(values) = &def.kbn_values {
+                let items: Vec<String> = values.iter().map(|n| n.to_string()).collect();
+                if !items.is_empty() {
+                    let validation = DataValidation::new()
+                        .allow_list_strings(&items)?
+                        .ignore_blank(true);
+
+                    worksheet.add_data_validation(
+                        header_row,
+                        c_idx as u16,
+                        max_row_idx,
+                        c_idx as u16,
+                        &validation,
+                    )?;
+                }
             }
         }
     }

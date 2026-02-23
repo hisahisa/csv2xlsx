@@ -1,7 +1,7 @@
 mod types;
 mod logic;
 
-use types::{ColType, ColDefinition};
+use types::{ColDefinition};
 use pyo3::prelude::*;
 use rust_xlsxwriter::{Workbook, Format};
 use std::error::Error;
@@ -18,11 +18,6 @@ fn write_csv_to_excel_inner(
 
     // 列幅の設定（書き込み前に実行）
     logic::apply_column_settings(worksheet, &col_defs)?;
-
-    // ColDefinition から ColType の Vec を生成
-    let col_types: Vec<ColType> = col_defs.iter()
-        .map(|d| ColType::from_str(&d.col_type))
-        .collect();
 
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(false)
@@ -46,7 +41,6 @@ fn write_csv_to_excel_inner(
 
         for (col_idx, field) in record.iter().enumerate() {
             let c_idx = col_idx as u16;
-            let col_type = col_types.get(col_idx).unwrap_or(&ColType::Str);
             let def: &ColDefinition = &col_defs[col_idx]; // 構造体をそのまま渡す
 
             logic::write_field(
@@ -55,7 +49,6 @@ fn write_csv_to_excel_inner(
                 c_idx,
                 field,
                 def,
-                col_type,
                 &date_format
             )?;
         }
